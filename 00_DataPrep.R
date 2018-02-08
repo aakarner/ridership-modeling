@@ -1,115 +1,14 @@
 library(dplyr)
 library(RSQLite)
 library(walkscoreAPI)
-library(stargazer) # Output regression results. http://www.princeton.edu/~otorres/NiceOutputR.pdf
-library(effects) # Generate marginal effects for plotting
-library(ggplot2)
-library(reshape2)
-library(sandwich)
-# library(Hmisc)
+# library(stargazer) # Output regression results. http://www.princeton.edu/~otorres/NiceOutputR.pdf
+# library(effects) # Generate marginal effects for plotting
+# library(ggplot2)
+# library(reshape2)
+# library(sandwich)
 
-# setwd("D:/Dropbox/Work/FTA fare and service equity/")
-
-# Function definitions ---------------------------------------------------------
-
-robSE <- function(glmob) {
-	sand_vcov <- sandwich(glmob)
-	sand_se <- sqrt(diag(sand_vcov))
-	print(sand_se) # Match Table II's "robust" standard errors
-
-	print("--------------------------------------")
-	
-	robust_z <- glmob$coef / sand_se
-	print(robust_z)
-	
-	# https://stats.stackexchange.com/questions/11676/pseudo-r-squared-formula-for-glms
-	# https://modtools.wordpress.com/2014/10/30/rsqglm/
-	# This isn't exactly a traditional R2
-	r2 <- 1 - glmob$deviance/glmob$null.deviance
-	
-	# But this pearson correlation should be
-	# https://stats.stackexchange.com/questions/87963/
-	# does-the-slope-of-a-regression-between-observed-and-predicted-values-always-equa
-	pears <- cor(glmob$y, glmob$fitted.values) ^ 2
-	  
-	print(paste0("r2:", r2))
-	print(paste0("pearson:", pears))
-}
-
-corstars <- function(x) {
-	x <- as.matrix(x)
-	R <- rcorr(x)$r
-	p <- rcorr(x)$P
- 	mystars <- ifelse(p < .01, "**|", ifelse(p < .05, "* |", "  |"))
- 	R <- format(round(cbind(rep(-1.111, ncol(x)), R), 3))[,-1]
- 	Rnew <- matrix(paste(R, mystars, sep=""), ncol=ncol(x))
- 	diag(Rnew) <- paste(diag(R), "  |", sep="")
- 	rownames(Rnew) <- colnames(x)
- 	colnames(Rnew) <- paste(colnames(x), "|", sep="")
- 	Rnew <- as.data.frame(Rnew)
- 	Rnew
-}
-
-# https://modtools.wordpress.com/2014/10/30/rsqglm/
-
-RsqGLM <- function(obs = NULL, pred = NULL, model = NULL) {
-  # version 1.2 (3 Jan 2015)
-  
-  model.provided <- ifelse(is.null(model), FALSE, TRUE)
-  
-  if (model.provided) {
-    if (!("glm" %in% class(model))) stop ("'model' must be of class 'glm'.")
-    if (!is.null(pred)) message("Argument 'pred' ignored in favour of 'model'.")
-    if (!is.null(obs)) message("Argument 'obs' ignored in favour of 'model'.")
-    obs <- model$y
-    pred <- model$fitted.values
-    
-  } else { # if model not provided
-    if (is.null(obs) | is.null(pred)) stop ("You must provide either 'obs' and 'pred', or a 'model' object of class 'glm'")
-    if (length(obs) != length(pred)) stop ("'obs' and 'pred' must be of the same length (and in the same order).")
-    if (!(obs %in% c(0, 1)) | pred < 0 | pred > 1) stop ("Sorry, 'obs' and 'pred' options currently only implemented for binomial GLMs (binary response variable with values 0 or 1) with logit link.")
-    logit <- log(pred / (1 - pred))
-    model <- glm(obs ~ logit, family = "binomial")
-  }
-  
-  null.mod <- glm(obs ~ 1, family = family(model))
-  loglike.M <- as.numeric(logLik(model))
-  loglike.0 <- as.numeric(logLik(null.mod))
-  N <- length(obs)
-  
-  # based on Nagelkerke 1991:
-  CoxSnell <- 1 - exp(-(2 / N) * (loglike.M - loglike.0))
-  Nagelkerke <- CoxSnell / (1 - exp((2 * N ^ (-1)) * loglike.0))
-  
-  # based on Allison 2014:
-  McFadden <- 1 - (loglike.M / loglike.0)
-  Tjur <- mean(pred[obs == 1]) - mean(pred[obs == 0])
-  sqPearson <- cor(obs, pred) ^ 2
-  
-  return(list(CoxSnell = CoxSnell, Nagelkerke = Nagelkerke, McFadden = McFadden, Tjur = Tjur, sqPearson = sqPearson))
-}
-
-
-# Connect to database
+# Connect to GTFS database
 db <- dbConnect(SQLite(), "data/GTFS/Valley Metro/05192014 download/GTFS.sql")
-
-
-# Get walkscores ---------------------------------------------------------------
-
-stops <- read.table("output/Stops_Snapped2Streets_XY.csv", sep = ",", header = TRUE, row.names = NULL)
-
-# Can only have 5000 API queries per day
-# Reset the limits as required
-for(i in 5001:7500) { 
-	stops$WS[i] <- getWS(stops[i, "longitude"], stops[i, "latitude"], "cc5c893dd721068ffd1f8af23317bf17")$walkscore
-}
-
-# Add walkscore info to database
-dbWriteTable(db, "stops_wlkscr", stops)
-
-write.table(stops, "output/Stops_withWalkScore.csv", sep = ",", row.names = FALSE)
-
-ws <- read.table("output/Stops_withWalkScore.csv", sep = ",", header = TRUE, row.names = NULL)
 
 # Data preparation -------------------------------------------------------------
 
