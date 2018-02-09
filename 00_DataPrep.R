@@ -1,53 +1,111 @@
 library(dplyr)
 library(RSQLite)
-library(walkscoreAPI)
-# library(stargazer) # Output regression results. http://www.princeton.edu/~otorres/NiceOutputR.pdf
-# library(effects) # Generate marginal effects for plotting
-# library(ggplot2)
-# library(reshape2)
-# library(sandwich)
+library(tidycensus)
+library(tidyverse)
+library(stringr)
+library(sf)
+
+# census_api_key("YOUR_API_KEY_HERE", install = TRUE)
 
 # Connect to GTFS database
-db <- dbConnect(SQLite(), "data/GTFS/Valley Metro/05192014 download/GTFS.sql")
+db <- dbConnect(SQLite(), "GTFS.sql")
 
-# Data preparation -------------------------------------------------------------
+## Retrieve route-level information from the GTFS database ---------------------
 
-# Query to retrieve all route IDs and route types from the GTFS database
+# Retrieve all route IDs and route types from the GTFS database
 routes <- dbGetQuery(db, "SELECT route_id, id FROM routes")
 
 # Aggregate walkscore to routes 
+# Walkscore was previously collected via their API
 routes$ws <- 0
 
 for(i in routes$route_id) {
-	# Select all stop that are part of this route for any trip during the week
+	# Select all stops that are part of this route for any trip during the week
 	routes$ws[routes$route_id == i] <-   
-		dbGetQuery(db, paste0("SELECT avg(ws) AS ws_mean FROM stops_wlkscr WHERE 
+		dbGetQuery(db, paste0(
+      "SELECT avg(ws) AS ws_mean FROM stops_wlkscr WHERE 
       stop_id IN (
     	SELECT DISTINCT stop_id FROM stop_times WHERE trip_id IN (
     	SELECT trip_id FROM trips WHERE route_id = \"", i, "\"))"))
 }
 
 routes$ws <- as.numeric(unlist(routes$ws))
-model.data <- read.table("data/RidershipCensusComparison_ToModel.csv", sep = ",", 
-  header = TRUE, row.names = NULL, stringsAsFactors = FALSE)
+model.data <- read.table(
+  "data/RidershipCensusComparison_ToModel.csv", 
+  sep = ",", header = TRUE, row.names = NULL, stringsAsFactors = FALSE)
 
 model.data <- left_join(model.data, routes, by = "route_id")
 model.data$ws <- unlist(model.data$ws)
 
 # Read in LEHD 2011 jobs and resident data
-lehd.2011 <- read.table("data/ServiceAreas_JobsWithin_LEHD_Join.csv", sep = ",", 
+lehd.2011 <- read.table(
+  "data/ServiceAreas_JobsWithin_LEHD_Join.csv", sep = ",", 
   header = TRUE, row.names = NULL, stringsAsFactors = FALSE)
 
 model.data <- left_join(model.data, lehd.2011, by = "route_id")
 
-# Merge in route-level population-weighted median income data
-# Before you do this, you have to run 01_HousholdIncome.R 
-# Or read the csv
+## Gather census data ----------------------------------------------------------
+
+# Use areal weighting to generate a median income at the route-level
+# using Census 2010 SF1 and the 2008-2012 five-year ACS estimtes
+
+# hhincvbles <- c("B19013_001", # median
+#                "B19013H_001", # white alone, not hispanic/latino
+#                "B19013B_001", # black alone
+#                "B19013I_001") # Hispanic or latino
+
+med.hh.income <- get_acs(
+  geography = "block group", variables = "B19013_001", state = "AZ", 
+  county = "Maricopa", geometry = TRUE)
+
+# Looks like very little race-specific information at the block group level 
+
+maricopa.blocks <- get_decennial(
+  geography = "block", variables = "P0010001", state = "AZ", 
+  county = "Maricopa", geometry = TRUE)
+
+maricopa.blocks$bgid <- str_sub(maricopa.blocks$GEOID, 1, 12)
+
+merged <- left_join(
+  maricopa.blocks, 
+  select(st_set_geometry(med.hh.income, NULL), GEOID, medinc = estimate), 
+  by = c("bgid" = "GEOID"))
+
+merged <- st_transform(merged, "+init=epsg:26912")
+merged$orig_area <- st_area(merged)
+
+# households -- P0220001
+
+# Read in route buffers
+route.buffers <- st_read("output/ServiceAreas_Stops.shp")
+route.buffers <- st_transform(route.buffers, "+init=epsg:26912")
+
+# Calculate the geometric intersection of the blocks and the routes
+# The dataframe contains the population in the block (value), the median income 
+# of the block group (medinc), and the original area of the block (orig_area)
+intersect <- st_intersection(route.buffers, merged)
+
+route.stats <- 
+  intersect %>%
+  mutate(new_area = st_area(intersect), hhs = new_area / orig_area * value) %>%
+  group_by(route_id) %>%
+  dplyr::summarize(
+    wtdinc = sum(hhs * medinc, na.rm = TRUE) / sum(hhs, na.rm = TRUE))
+
+route.stats$wtdinc <- as.numeric(route.stats$wtdinc)
+
+ggplot(route.stats, aes(y = route_id, x = wtdinc)) + geom_point()                    
+
+route.stats <- st_set_geometry(route.stats, NULL)
+
+write.table(route.stats, "output/RouteStatsIncome.csv", sep = ",", 
+            row.names = FALSE)
 # route.stats <- read.table("output/RouteStatsIncome.csv", sep = ",", 
-#   header = TRUE, row.names = NULL)
+
+# Join route-level population-weighted median income data to the model dataframe
 model.data <- left_join(model.data, route.stats)
 
-# Create required covariates ---------------------------------------------------------------------
+# Create required covariates ---------------------------------------------------
 model.data <- mutate(
    model.data,
    mode_collapse = 
@@ -66,7 +124,7 @@ model.data <- mutate(
    ce03 = CE03_w / 1000,
    hiwageshare = hiwagejobs / totjobs,
    lowageshare = lowagejobs / totjobs,
-   resdens = (total_c / 1000) / (Shape_Area / 1e6), # In response to final review comments
+   resdens = (total_c / 1000) / (Shape_Area / 1e6),
    jobdens = totjobs / (Shape_Area / 1e6), # Units are 1000 jobs/km2
    lwjobdens = lowagejobs / (Shape_Area / 1e6),
    hwjobdens = hiwagejobs / (Shape_Area / 1e6),
@@ -78,14 +136,5 @@ model.data <- mutate(
 
 model.data <- inner_join(model.data, route.stats, by = c("route_id.1" = "route_id"))
 
-write.table(model.data, "data/RidershipCensusComparison_Model_FINAL.csv", sep = ",", row.names = FALSE)
-
-model.data <- read.table("data/RidershipCensusComparison_Model_FINAL.csv", 
-                         header = TRUE, sep = ",", row.names = NULL)
-
-
-
-
-# Compare walkscore and residential/job density
-cor(model.data$ws, model.data$resdens)
-cor(model.data$ws, model.data$jobdens)
+write.table(model.data, "data/RidershipCensusComparison_Model_FINAL.csv", 
+            sep = ",", row.names = FALSE)
