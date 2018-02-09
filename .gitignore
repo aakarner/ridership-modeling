@@ -1,7 +1,7 @@
-.sql
+*.sql
 .Rproj
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
-.csv
+*.csv
