@@ -1,7 +1,6 @@
-library(dplyr)
+library(tidyverse)
 library(RSQLite)
 library(tidycensus)
-library(tidyverse)
 library(stringr)
 library(sf)
 
@@ -54,33 +53,37 @@ model.data <- left_join(model.data, lehd.2011, by = "route_id")
 #                "B19013B_001", # black alone
 #                "B19013I_001") # Hispanic or latino
 
+# Very little race-specific information available at the blockgroup level
+# from the ACS. Just get the median household income instead. 
 med.hh.income <- get_acs(
   geography = "block group", variables = "B19013_001", state = "AZ", 
   county = "Maricopa", geometry = TRUE)
 
-# Looks like very little race-specific information at the block group level 
-
+# These are block-level population counts
+# We're most interested in the geometry, though
 maricopa.blocks <- get_decennial(
   geography = "block", variables = "P0010001", state = "AZ", 
   county = "Maricopa", geometry = TRUE)
 
+# Extract the blockgroup FIPS code
 maricopa.blocks$bgid <- str_sub(maricopa.blocks$GEOID, 1, 12)
 
-merged <- left_join(
+# Associate the blockgroup-level median income (ACS) with each block (SF1)
+census.merged <- left_join(
   maricopa.blocks, 
   select(st_set_geometry(med.hh.income, NULL), GEOID, medinc = estimate), 
   by = c("bgid" = "GEOID"))
 
-merged <- st_transform(merged, "+init=epsg:26912")
-merged$orig_area <- st_area(merged)
+census.merged <- st_transform(census.merged, "+init=epsg:26912")
 
-# households -- P0220001
+# Calculate census block areas
+census.merged$orig_area <- st_area(census.merged)
 
 # Read in route buffers
-route.buffers <- st_read("output/ServiceAreas_Stops.shp")
+route.buffers <- st_read("data/ServiceAreas_Stops.shp")
 route.buffers <- st_transform(route.buffers, "+init=epsg:26912")
 
-# Calculate the geometric intersection of the blocks and the routes
+# Calculate the geometric intersection of blocks and routes
 # The dataframe contains the population in the block (value), the median income 
 # of the block group (medinc), and the original area of the block (orig_area)
 intersect <- st_intersection(route.buffers, merged)
