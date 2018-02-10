@@ -102,10 +102,11 @@ write.table(route.stats, "output/RouteStatsIncome.csv", sep = ",",
             row.names = FALSE)
 # route.stats <- read.table("output/RouteStatsIncome.csv", sep = ",", 
 
-# Join route-level population-weighted median income data to the model dataframe
+# Join route-level population-weighted median income data to the model data
 model.data <- left_join(model.data, route.stats)
 
 # Create required covariates ---------------------------------------------------
+
 model.data <- mutate(
    model.data,
    mode_collapse = 
@@ -132,7 +133,6 @@ model.data <- mutate(
    ce03dens = ce03 / (Shape_Area / 1e6),
    ce12dens = ce12 / (Shape_Area / 1e6),
    wtdinc1 = wtdinc / 1000)
-
 
 model.data <- inner_join(model.data, route.stats, by = c("route_id.1" = "route_id"))
 
