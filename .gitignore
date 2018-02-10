@@ -1,4 +1,5 @@
 *.sql
+*.zip
 .Rproj
 .Rproj.user
 .Rhistory

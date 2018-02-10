@@ -46,7 +46,8 @@ model.data <- left_join(model.data, lehd.2011, by = "route_id")
 ## Gather census data ----------------------------------------------------------
 
 # Use areal weighting to generate a median income at the route-level
-# using Census 2010 SF1 and the 2008-2012 five-year ACS estimtes
+# using Census 2010 SF1 population counds and the 2008-2012 five-year 
+# ACS estimtes of median household income.
 
 # hhincvbles <- c("B19013_001", # median
 #                "B19013H_001", # white alone, not hispanic/latino
@@ -84,23 +85,22 @@ route.buffers <- st_read("data/ServiceAreas_Stops.shp")
 route.buffers <- st_transform(route.buffers, "+init=epsg:26912")
 
 # Calculate the geometric intersection of blocks and routes
-# The dataframe contains the population in the block (value), the median income 
-# of the block group (medinc), and the original area of the block (orig_area)
-intersect <- st_intersection(route.buffers, merged)
+# The dataframe contains the population in each block (value), the median 
+# hosusehold income of the block group (medinc), and the original area of 
+# the block (orig_area)
+intersect <- st_intersection(route.buffers, census.merged)
 
 route.stats <- 
   intersect %>%
-  mutate(new_area = st_area(intersect), hhs = new_area / orig_area * value) %>%
+  mutate(new_area = st_area(intersect), pop = new_area / orig_area * value) %>%
   group_by(route_id) %>%
   dplyr::summarize(
-    wtdinc = sum(hhs * medinc, na.rm = TRUE) / sum(hhs, na.rm = TRUE))
+    wtdinc = sum(pop * medinc, na.rm = TRUE) / sum(pop, na.rm = TRUE))
 
 route.stats$wtdinc <- as.numeric(route.stats$wtdinc)
-
-ggplot(route.stats, aes(y = route_id, x = wtdinc)) + geom_point()                    
-
 route.stats <- st_set_geometry(route.stats, NULL)
 
+# Write the output to avoid downloading the census data in the future
 write.table(route.stats, "output/RouteStatsIncome.csv", sep = ",", 
             row.names = FALSE)
 # route.stats <- read.table("output/RouteStatsIncome.csv", sep = ",", 
@@ -137,7 +137,5 @@ model.data <- mutate(
    ce12dens = ce12 / (Shape_Area / 1e6),
    wtdinc1 = wtdinc / 1000)
 
-model.data <- inner_join(model.data, route.stats, by = c("route_id.1" = "route_id"))
-
-write.table(model.data, "data/RidershipCensusComparison_Model_FINAL.csv", 
+write.table(model.data, "output/RidershipCensusComparison_Model_FINAL.csv", 
             sep = ",", row.names = FALSE)
