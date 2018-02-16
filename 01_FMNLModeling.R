@@ -7,15 +7,15 @@ library(fmlogit)
 model.data <- read.table("data/RidershipCensusComparison_Model_FINAL.csv", 
                          header = TRUE, sep = ",", row.names = NULL)
 
-
+# Full set of five racial variables
 fmnl_input <- model_data %>% 
   mutate(pct_other_c = 1 - pct_white_c - pct_black_c - pct_latino_c - pct_asian_c,
          pct_other_r = 1 - pct_white_r - pct_black_r - pct_latino_r - pct_asian_r)
 
 
-fmnl_input <- model_data %>% 
-  mutate(pct_other_c = 1 - pct_white_c - pct_black_c - pct_latino_c,
-         pct_other_r = 1 - pct_white_r - pct_black_r - pct_latino_r)
+# fmnl_input <- model_data %>% 
+#   mutate(pct_other_c = 1 - pct_white_c - pct_black_c - pct_latino_c,
+#          pct_other_r = 1 - pct_white_r - pct_black_r - pct_latino_r)
 
 
 x1 <-select(model_data, pct_latino_c, pct_black_c, pct_asian_c)
