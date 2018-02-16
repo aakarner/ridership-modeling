@@ -1,6 +1,6 @@
 *.sql
 *.zip
-.Rproj
+*.Rproj
 .Rproj.user
 .Rhistory
 .RData
